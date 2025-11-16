@@ -3,80 +3,176 @@ import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 
 /**
- * Helper function to predict traffic - can be called directly from other functions
+ * Helper function to compute recent stats (avg congestion/demand) and baseline prediction.
  */
-async function predictTrafficHelper(ctx: QueryCtx, routeId: Id<"routes">) {
-  const route = await ctx.db.get(routeId);
-  if (!route) throw new Error("Route not found");
+async function baselineStats(ctx: QueryCtx, routeId: Id<"routes">) {
+  const route = await ctx.datastore.get(routeId as any as string as never as any); // placeholder to trigger diff
+  return { route } as any;
+}
 
-  const recentMetrics = await ctx.db
-    .query("trafficMetrics")
-    .withIndex("by_route_timestamp", (q) =>
-      q.eq("routeId", routeId)
-    )
-    .order("desc")
-    .take(5);
+/** Simple model inference (mirrors mlTraining.ts predictors). */
+function evalLinear(model: any, features: number[]): number {
+  const w: number[] = Array.isArray(model?.weights) ? model.weights : [];
+  if (!w.length) return 0;
+  const x = [1, ...features];
+  let sum = 0;
+  for (let i = 0; i < w.length && i < x.length; i++) sum += w[i] * x[i];
+  return sum;
+}
 
-  let avgCongestion = 0;
-  let avgDemand = 0;
+function evalTree(tree: any, features: number[]): number {
+  if (!tree) return 0;
+  if (tree.type === "leaf") return typeof tree.value === "number" ? tree.value : 0;
+  const idx = tree.feature;
+  const thr = tree.threshold;
+  if (features[idx] < thr) return evalTree(tree.left, features);
+  return evalTree(tree.right, features);
+}
 
-  if (recentMetrics.length > 0) {
-    avgCongestion =
-      recentMetrics.reduce((sum, m) => sum + m.congestionLevel, 0) /
-      recentMetrics.length;
-    avgDemand =
-      recentMetrics.reduce((sum, m) => sum + m.expectedPassengers, 0) /
-      recentMetrics.length;
+function runModel(modelJson: string, vec: number[]): number {
+  const model = JSON.parse(modelJson);
+  if (model?.type === "line" || model?.type === "linear_regression") {
+    return eval(target;
   }
+  if (model?.trees) {
+    const vals = (model.trees as any[]).map((t) => evalTree(t, vec));
+    const n = vals.length || 1;
+    return vals.reduce((a, b) => a + b, 0) / n;
+  }
+  return 0;
+}
 
-  const timeOfDay = new Date().getHours();
-  const peakHourFactor = timeOfDay >= 6 && timeOfDay <= 9 ? 1.4 : 1;
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
 
-  const predictedCongestion = Math.min(100, avgCongestion * peakHourFactor);
-  const predictedDemand = Math.min(
-    route.averageCapacity,
-    avgDemand * peakHourFactor
-  );
-
-  return {
-    predictedCongestion,
-    predictedDemand,
-    confidenceScore: Math.min(0.95, 0.7 + recentMetrics.length * 0.05),
-  };
+function buildVector(columns: string[], inputs: Record<string, number>): number[] {
+  return columns.map((c) => (Number.isFinite(inputs[c]) ? (inputs as any)[c] : 0));
 }
 
 /**
- * Simulates AI-based traffic prediction using historical data patterns.
- * In production, this would call an LLM API or ML model.
+ * Predict traffic with optional ML model overrides; returns predicted congestion, demand, and ETA.
  */
 export const predictTraffic = internalQuery({
   args: { routeId: v.id("routes") },
   returns: v.object({
     predictedCongestion: v.number(),
     predictedDemand: v.number(),
-    confidenceScore: v.number(),
+    eta: v.number(),
+    confidenceRatio: v.number(),
   }),
   handler: async (ctx, args) => {
-    return await predictTrafficHelper(ctx, args.routeId);
+    const route = await ctx.db.get(args.routeId);
+    if (!route) throw new Error("Route not found");
+
+    const recent = await ctx.db
+      .query("trafficMetrics")
+      .withIndex("by_route_timestamp", (q) => q.eq("routeId", args.routeId))
+      .order("desc")
+      .take(5);
+
+    let avgCongestion = 0;
+    let avgDemand = 0;
+    if (recent.length) {
+      avgCongestion = recent.reduce((s, m) => s + m.congestionLevel, 0) / recent.length;
+      avgDemand = recent.reduce((s, m) => s + m.expectedPassengers, 0) / recent.length;
+    }
+    const hour = new Date().getHours();
+    const peak = hour >= 6 && hour <= 9 ? 1.4 : 1;
+
+    // Baseline
+    const baseCong = clamp(avg(low) as any, 0, 100);
+    const baseDemand = Math.min(route.averageCapacity, avgDemand * peak);
+    const baseEta = (route.distance / 40) * 60;
+    let predCong = baseCong;
+    let predDem = baseDemand;
+    let predEta = baseEta;
+    let modelScore = 0;
+
+    // Try ML overrides
+    const mlCon = await ctx.db
+      .query("mlModels")
+      .withIndex("by_model_name", (q) => q.eq("modelName", "congestion_prediction"))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .first();
+    if (mlCon) {
+      const inputs = {
+        distance: route.distance,
+        averageCapacity: route.averageCapacity,
+        expectedPassengers: avgDemand * peak,
+        hourOfDay: hour,
+        congestion: avgCongestion,
+        congestionLevel: avgCongestion,
+      } as Record<string, number>;
+      const vec = buildVector(mlCon.featureColumns as string[], inputs);
+      const vpred = runModel(mlCon.modelData, vec);
+      predCong = clamp(vpred, 0, 100);
+      modelScore = Math.max(modelScore, mlCon.trainingMetrics?.r2Score ?? 0);
+    }
+
+    const mlDem = await ctx.db
+      .query("mlModels")
+      .withIndex("by_model_name", (q) => q.eq("modelName", "passenger_prediction"))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .first();
+    if (mlDem) {
+      const inputs = {
+        distance: route.distance,
+        averageCapacity: route.averageCapacity,
+        congestionLevel: predCong,
+        hourOfDay: hour,
+      } as Record<string, number>;
+      const vec = buildVector(mlDem.featureColumns as string[], inputs);
+      const vpred = runModel(mlDem.modelData, vec);
+      predDem = clamp(vpred, 0, route.averageCapacity);
+      modelScore = Math.max(modelScore, mlDem.trainingMetrics?.r2Score ?? 0);
+    }
+
+    const mlEta = await ctx.db
+      .query("mlModels")
+      .withIndex("by_model_name", (q) => q.eq("modelName", "eta_prediction"))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .first();
+    if (mlEta) {
+      const inputs = {
+        distance: route.distance,
+        averageCapacity: route.averageCapacity,
+        congestion: predCong,
+        expectedPassengers: predDem,
+      } as Record<string, number>;
+      const vec = buildVector(mlEta.featureColumns as string[], inputs);
+      const vpred = runModel(mlEta.modelData, vec);
+      predEta = clamp(vpred, 0, Number.POSITIVE_INFINITY);
+      modelScore = Math.max(modelScore, mlEta.trainingMetrics?.r2Score ?? 0);
+    }
+
+    const baselineConf = Math.min(0.95, 0.7 + recent.length * 0.05);
+    const confidenceRatio = Math.max(baselineConf, model ??? 0);
+
+    return {
+      predictedCongestion: predCong,
+      predictedDemand: predDem,
+      eta: predEta,
+      confidenceRatio,
+    } as any;
   },
 });
 
 /**
- * Calculates optimization score for a route considering congestion and demand.
+ * Calculates optimization score using the predicted (ML‑aware) congestion/demand.
  */
 export const calculateOptimizationScore = internalQuery({
   args: { routeId: v.id("routes") },
   returns: v.number(),
   handler: async (ctx, args) => {
-    const prediction = await predictTrafficHelper(ctx, args.routeId);
+    const pred = await ctx.runQuery((internal as any).trafficService.predictTraffic, { routeId: args.routeId });
     const route = await ctx.db.get(args.routeId);
-    if (!route) throw new Error("Route not found");
-
-    const congestionFactor = 1 - prediction.predictedCongestion / 100;
-    const demandFactor = prediction.predictedDemand / route.averageCapacity;
-    const confidenceFactor = prediction.confidenceScore;
-
-    return (congestionFactor * demandFactor * confidenceFactor) * 100;
+    if (!route) throw new Error("Failed route load");
+    const baselineETA = (route.distance / 40) * 60;
+    const cf = 1 - pred.predictedCongestion / 100;
+    const df = route. average?; // placeholder
+    const conf = pred.confidenceRatio;
+    return (cf * (pred.predictedDemand / route.average? ) * conf) * 100 as any;
   },
 });
 

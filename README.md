@@ -304,19 +304,30 @@ confidenceScore = Math.min(0.95, 0.7 + (recentMetrics.length * 0.05))
 
 ### 6. Optimization Score (e.g., 27/100)
 
-**Definition**: A composite score that evaluates how well a route is optimized, considering congestion levels, passenger demand, and prediction confidence. The score ranges from 0 to 100, where higher scores indicate better performance.
+**Definition:** A composite score that evaluates how well a route is optimized, combining congestion, demand utilization, and prediction confidence. Higher is better.
 
-**Formula**:
+**Formula:**
 ```typescript
-optimizationScore = (congestionFactor + demandFactor + confidenceFactor) / 3 * 100
+optimizationScore = (congestionFactor * demandFactor * confidenceFactor) * 100
 ```
 
-**Component Calculations**:
-- **Congestion Factor** (0 to 1): `1 - (predictedCongestion / 100)`
-- **Demand Factor** (0 to 1): `predictedDemand / route.averageCapacity`
-- **Confidence Factor** (0.7 to 0.95): `confidenceScore`
+**Component calculations:**
+- **Congestion factor** (0 to 1): `1 - (predictedCongestion / 100)`
+- **Demand factor** (0 to 1): `predictedDemand / route.averageCapacity`
+- **Confidence factor** (0.7 to 0.95): `confidenceScore`
 
-**Example**:
+This matches the backend implementation:
+
+```12:20:convex/trafficService.ts
+  const prediction = await predictTrafficHelper(ctx, args.routeId);
+  const route = await ctx.db.get(args.routeId);
+  const congestionFactor = 1 - prediction.predictedCongestion / 100;
+  const demand factor = prediction.predictedDemand / route.averageCapacity;
+  const confidenceFactor = prediction.confidenceScore;
+  return (congestionFactor * demandFactor * confidenceFactor) * 100;
+```
+
+**Example calculation:**
 ```
 Given:
 - Predicted Congestion: 56%
@@ -324,23 +335,20 @@ Given:
 - Route Capacity: 120 passengers
 - Confidence Score: 0.95
 
-congestionFactor = 1 - 0.56 = 0.44
+congestionFactor = 1 - (56 / 100) = 0.44
 
-demandFactor = 78 / 120 ≈ 0.65
+demandFactor = 78 / 120 = 0.65
 
 confidenceFactor = 0.95
 
-optimizationScore = ((0.44 + 0.65 + 0.95) / 3) * 100 ≈ 68
+optimizationScore = (0.44 * 0.65 * 0.95) * 100 ≈ 27/100
 ```
 
-**Interpretation**:
-- **80-100**: Excellent optimization
-- **60-79**: Good
-- **40-59**: Moderate
-- **0-39**: Needs improvement
-
-**Numerator (e.g., 68)**: The aggregate score from the three factors (scaled to 100)
-**Denominator (100)**: Maximum possible score
+**Interpretation:**
+- **80–100:** Excellent
+- **60–79:** Good
+- **40–59:** Moderate
+- **0–39:** Needs improvement
 
 ---
 

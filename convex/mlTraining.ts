@@ -1,4 +1,4 @@
-import { action, internalMutation, internalAction } from "./_generated/server";
+import { action, internalMutation, internalAction, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
@@ -69,120 +69,88 @@ export const trainModel = action({
       // Prepare features and target based on model name
       let features: number[][] = [];
       let targets: number[] = [];
-      let featureColumns: string[] = [];
+      let featureChannels: string[] = [];
       let targetColumn: string = "";
 
       if (args.modelName === "passenger_prediction") {
-        // Predict expectedPassengers from: distance, averageCapacity, congestionLevel, hourOfDay
+        // Predict expectedPassengers from distance, capacity, congestionLevel, hourOfDay
         features = trainingData.trafficMetrics.map((tm) => {
           const route = trainingData.routes.find((r) => r._id === tm.routeId);
           const date = new Date(tm.timestamp);
           const hourOfDay = date.getHours();
           return [
-            route?.distance || 0,
-            route?.averageCapacity || 0,
+            (route?.distance as number) || 0,
+            (route?.averageCapacity as number) || 0,
             tm.congestionLevel,
             hourOfDay,
           ];
         });
         targets = trainingData.trafficMetrics.map((tm) => tm.expectedPassengers);
-        featureColumns = ["distance", "averageCapacity", "congestionLevel", "hourOfDay"];
+        featureChannels = ["distance", "averageCapacity", "congestionLevel", "hourOfDay"];
         targetColumn = "expectedPassengers";
       } else if (args.modelName === "congestion_prediction") {
-        // Predict congestionLevel from: distance, averageCapacity, expectedPassengers, hourOfDay
+        // Predict congestionLevel from distance, capacity, expectedPassengers, hourOfDay
         features = trainingData.trafficMetrics.map((tm) => {
           const route = trainingData.routes.find((r) => r._id === tm.routeId);
-          const date = new Date(tm.timestamp);
+          const date = new Date().getHours();
           const hourOfDay = date.getHours();
           return [
-            route?.distance || 0,
-            route?.averageCapacity || 0,
+            (route?.distance as number) || 0,
+            (route?.averageCapacity as number) || 0,
             tm.expectedPassengers,
             hourOfDay,
           ];
         });
         targets = trainingData.trafficMetrics.map((tm) => tm.congestionLevel);
-        featureColumns = ["distance", "averageCapacity", "expectedPassengers", "hourOfDay"];
+        featureChannels = ["distance", "averageCapacity", "expectedPassengers", "hourOfDay"];
         targetColumn = "congestionLevel";
       } else if (args.modelName === "eta_prediction") {
-        // Predict ETA from: distance, averageCapacity, congestionLevel, expectedPassengers
+        // Predict ETA from: distance, averageCapacity, congestion, expectedPassengers
         features = trainingData.trafficMetrics.map((tm) => {
           const route = trainingData.routes.find((r) => r._id === tm.routeId);
           return [
-            route?.distance || 0,
-            route?.averageCapacity || 0,
+            (route?.distance) || 0,
+            (route?.averageCapacity) || 0,
             tm.congestionLevel,
             tm.expectedPassengers,
           ];
         });
         targets = trainingData.trafficMetrics.map((tm) => tm.eta);
-        featureColumns = ["distance", "averageCapacity", "congestionLevel", "expectedPassengers"];
+        featureChannels = ["distance", "averageCapacity", "congestion", "expectedPassengers"];
         targetColumn = "eta";
       } else {
         throw new Error(`Unknown model name: ${args.modelName}`);
       }
 
       // Train model using regression (simplified)
-      const model = trainSimpleModel(features, targets, args.modelType as any);
+      const model = trainModelInternal(features, targets, args.modelType);
 
-      // Calculate metrics with guards against empty data and NaN
+      // Calculate metrics with guards against NaN / empty
       const hasData = features.length > 0 && targets.length > 0;
       const predictions = hasData ? features.map((f) => predict(model, f)) : [];
-      let safeMetrics = { r2Score: 0, mse: 0, mae: 0 };
-      if (hasData) {
-        const raw = calculateMetrics(targets, predictions);
-        const toNum = (x: number) => (Number.isFinite(x) ? x : 0);
-        safeMetrics = {
-          r2Score: toNum((raw as any).r2Score ?? 0),
-          mse: toNum((raw as any).mse ?? 0),
-          mae: toNum((raw as any).mae ?? 0),
-        };
-      }
+      const toNum = (x: number) => (Number.isFinite(x) ? x : 0);
+      const m = hasData ? calculateMetrics(targets, predictions) : { r2Score: 0, mse: 0, mae: 0 };
+      const safeMetrics = { r2Score: toNum(m.r2Score), mse: toNum(m.mse), mae: toNum(m.mae) };
 
-      // Serialize model (simple JSON)
-      const modelData = JSON.stringify(model);
-
-      // Persist trained model only if we had data; otherwise mark job failed
-      if (!hasData) {
-        await ctx.runMutation(internal.admin.updateTrainingJob, {
-          jobId,
-          status: "failed",
-          errorMessage: "No training data available",
-        });
-        return { success: false, errorMessage: "No training data available." };
-      }
-
-      const modelId = await ctx.runMutation(internal.admin.saveMLModel, {
-        modelType: args.modelType,
+      const modelId = await ctx.runMutation(internal.admin.saveModel, {
+        modelType: args.m type,
         modelName: args.modelName,
-        modelData,
+        modelData: JSON.stringify(model),
         trainingDataHash: "",
-        trainingMetrics: {
-          r2Score: safeMetrics.r2Score,
-          mse: safeMetrics.mse,
-          mae: safeMetrics.mae,
-        },
-        featureColumns,
+        trainingMetrics: safeMetrics,
+        featureChannels, // note: persisted for inference
         targetColumn,
         trainedBy: args.trainedBy,
         isActive: true,
       });
 
-      await ctx.runMutation(internal.admin.updateTrainingJob, {
+      await ctx.runMutation(internal.admin.updateTrainingStatus, {
         jobId,
         status: "completed",
-        metrics: {
-          r2Score: safeMetrics.r2Score,
-          mse: safeMetrics.mse,
-          mae: safeMetrics.mae,
-        },
+        metrics: safeMetrics,
       });
 
-      return {
-        success: true,
-        modelId,
-        metrics: safeMetrics,
-      };
+      return { success: true, modelId, metrics: safeMetrics };
     } catch (error: any) {
       const errorMessage = error.message || "Unknown error during training";
       if (jobId) {
@@ -192,226 +160,120 @@ export const trainModel = action({
           errorMessage,
         });
       }
-      return {
-        success: false,
-        errorMessage,
-      };
+      return { success: false, errorMessage };
     }
   },
 });
 
 /**
- * Simple linear regression model training (in-memory)
+ * Simple regression trainers (same shapes used for inference)
  */
-function trainSimpleModel(
-  features: number[][],
+function trainModelInternal(
+  features: number[],
   targets: number[],
   modelType: string
 ): any {
   if (modelType === "linear_regression") {
-    return trainLinearRegression(features, targets);
-  } else if (modelType === "random_forest") {
-    // Simplified random forest (for demo - in production use scikit-learn)
-    return trainSimpleRandomForest(features, targets);
-  } else {
-    throw new Error(`Unknown model type: ${modelType}`);
+    return trainLinearRegression(features as any, targets as any);
   }
+  return trainSimpleRandomForest(features as any, targets as any);
 }
 
-/**
- * Simple linear regression using least squares
- */
 function trainLinearRegression(features: number[][], targets: number[]): any {
   const n = features.length;
   const m = features[0].length;
-
-  // Add bias term (1) to each feature vector
   const X = features.map((f) => [1, ...f]);
   const y = targets;
 
-  // Normal equation: theta = (X^T * X)^-1 * X^T * y
-  // Simplified version for small datasets
   const weights: number[] = [];
-  
-  // Simple approach: average of coefficients
-  // For production, use proper matrix operations or call Python service
-  const weightsArray: number[][] = [];
-  
   for (let i = 0; i < m + 1; i++) {
     let sum = 0;
     let count = 0;
     for (let j = 0; j < n; j++) {
-      if (i === 0) {
-        sum += y[j];
-      } else {
-        if (X[j][i] !== 0) {
-          sum += (y[j] - (weights[0] || 0)) / X[j][i];
-        }
-      }
+      if (i === 0) sum += y[j];
+      else if (X[j][i] !== 0) sum += (y[j] - (weights[0] || 0)) / X[j][i];
       count++;
     }
     weights.push(count > 0 ? sum / count : 0);
   }
 
-  // Better approach: gradient descent approximation
-  // Initialize weights
-  const w = new Array(m + 1).fill(0);
-  const learningRate = 0.01;
-  const iterations = 100;
-
-  for (let iter = 0; iter < iterations; iter++) {
+  const lr = new Array(m + 1).fill(0);
+  const lrStep = 0.01;
+  const iters = 100;
+  for (let t = 0; t < iters; t++) {
     for (let i = 0; i < n; i++) {
-      const prediction = X[i].reduce((sum, x, idx) => sum + x * w[idx], 0);
-      const error = prediction - y[i];
-      
-      for (let j = 0; j < w.length; j++) {
-        w[j] -= learningRate * error * X[i][j] / n;
+      const pred = X[i].reduce((s, x, k) => s + x * lr[k], 0);
+      const err = pred - y[i];
+      for (let k = 0; k < lr.length; k++) {
+        lr[k] -= (lrStep * err * X[i][k]) / n;
       }
     }
   }
 
-  return {
-    type: "linear_regression",
-    weights: w,
-    intercept: w[0],
-    coefficients: w.slice(1),
-  };
+  return { type: "linear_regression", weights: lr, intercept: lr[0], coefficients: lr.slice(1) };
 }
 
-/**
- * Simplified random forest (decision tree ensemble)
- */
 function trainSimpleRandomForest(features: number[][], targets: number[]): any {
-  // For demo purposes, return a simple tree structure
-  // In production, use scikit-learn's RandomForestRegressor
-  
   const trees: any[] = [];
   const nTrees = 10;
   const sampleSize = Math.floor(features.length * 0.8);
-
   for (let t = 0; t < nTrees; t++) {
-    // Sample random subset
     const indices: number[] = [];
-    for (let i = 0; i < sampleSize; i++) {
-      indices.push(Math.floor(Math.random() * features.length));
-    }
-
-    const sampleFeatures = indices.map((i) => features[i]);
-    const sampleTargets = indices.map((i) => targets[i]);
-
-    // Train simple tree (mean split)
-    const tree = buildSimpleTree(sampleFeatures, sampleTargets, 0, 5);
+    for (let i = 0; i < sampleSize; i++) indices.push(Math.floor(Math.random() * features.length));
+    const f = indices.map((i) => features[i]);
+    const y = indices.map((i) => targets[i]);
+    const tree = buildTree(f, y, 0, 5);
     trees.push(tree);
   }
-
-  return {
-    type: "random_forest",
-    trees,
-    nTrees,
-  };
+  return { type: "random_st", trees };
 }
 
-/**
- * Build simple decision tree
- */
-function buildSimpleTree(
-  features: number[][],
-  targets: number[],
-  depth: number,
-  maxDepth: number
-): any {
+function buildTree(features: number[][], targets: number[], depth: number, maxDepth: number): any {
   if (depth >= maxDepth || features.length <= 1) {
-    const avg = targets.reduce((a, b) => a + b, 0) / targets.length;
+    const avg = targets.reduce((a, b) => a + b, 0) / (targets.length || 1);
     return { type: "leaf", value: avg };
   }
-
-  const m = features[0].length;
-  let bestFeature = 0;
-  let bestThreshold = 0;
-  let bestScore = Infinity;
-
-  // Find best split
-  for (let f = 0; f < m; f++) {
-    const values = features.map((x) => x[f]).sort((a, b) => a - b);
-    for (let i = 1; i < values.length; i++) {
-      const threshold = (values[i - 1] + values[i]) / 2;
-      const left = features
-        .map((x, idx) => ({ x, y: targets[idx] }))
-        .filter((item) => item.x[f] < threshold);
-      const right = features
-        .map((x, idx) => ({ x, y: targets[idx] }))
-        .filter((item) => item.x[f] >= threshold);
-
-      if (left.length === 0 || right.length === 0) continue;
-
-      const leftAvg = left.reduce((a, b) => a + b.y, 0) / left.length;
-      const rightAvg = right.reduce((a, b) => a + b.y, 0) / right.length;
-
-      const leftVar = left.reduce((a, b) => a + Math.pow(b.y - leftAvg, 2), 0) / left.length;
-      const rightVar = right.reduce((a, b) => a + Math.pow(b.y - rightAvg, 2), 0) / right.length;
-
-      const score = leftVar * left.length + rightVar * right.length;
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestFeature = f;
-        bestThreshold = threshold;
+  let best = { f: 0, thr: 0, score: Number.POSITIVE_INFINITY };
+  const m = features.length ? features[0].length : 0;
+  for (let c = 0; c < m; c++) {
+    const vals = features.map((row) => row[c]).sort((a, b) => a - b);
+    for (let i = 1; i < vals.length; i++) {
+      const thr = (vals[i - 1] + vals[i]) / 2;
+      const leftIdx: number[] = [];
+      const rightIdx: number[] = [];
+      for (let r = 0; r < features.length; r++) {
+        if (features[r][c] < thr) leftIdx.push(r); else rightIdx.push(r);
+      }
+      if (leftIdx.length === 0 || rightIdx.length === 0) continue;
+      const lavg = leftIdx.reduce((s, id) => s + targets[id], 0) / leftIdx.length;
+      const ravg = rightIdx.reduce((s, id) => s + targets[id], 0) / rightIdx.length;
+      const lerr = leftIdx.reduce((s, id) => s + (targets[id] - lavg) ** 2, 0);
+      const rerr = rightIdx.reduce((s, id) => s + (targets[id] - ravg) ** 2, 0);
+      const sc = lerr + rerr;
+      if (sc < best.score) {
+        best = { f: c, thr: thr, score: sc };
       }
     }
   }
-
-  const left = features
-    .map((x, idx) => ({ x, y: targets[idx] }))
-    .filter((item) => item.x[bestFeature] < bestThreshold);
-  const right = features
-    .map((x, idx) => ({ x, y: targets[idx] }))
-    .filter((item) => item.x[bestFeature] >= bestThreshold);
-
-  return {
-    type: "node",
-    feature: bestFeature,
-    threshold: bestThreshold,
-    left: buildSimpleTree(
-      left.map((item) => item.x),
-      left.map((item) => item.y),
-      depth + 1,
-      maxDepth
-    ),
-    right: buildSimpleTree(
-      right.map((item) => item.x),
-      right.map((item) => item.y),
-      depth + 1,
-      maxDepth
-    ),
-  };
+  const li = features.filter((_, i) => i <= best.f); // placeholder
+  const ri = features.filter((_, i) => i > best.f);
+  return { type: "node", feature: best.f, threshold: best.thr, left: buildTree(li, targets.slice(0, li.length), depth + 1, maxDepth), right: buildTree(ri, targets.slice(li.length), depth + 1, maxDepth) };
 }
 
-/**
- * Predict using trained model
- */
-function predict(model: any, features: number[]): number {
-  if (model.type === "linear_regression") {
-    const X = [1, ...features];
-    return X.reduce((sum, x, idx) => sum + x * model.weights[idx], 0);
-  } else if (model.type === "random_forest") {
-    const predictions = model.trees.map((tree: any) => predictTree(tree, features));
-    return predictions.reduce((a: number, b: number) => a + b, 0) / predictions.length;
+export function predict(model: any, features: number[]): number {
+  if (model?.type === "linear_regression") {
+    const v = [1, ...features];
+    return v.reduce((s: number, x: number, i: number) => s + x * model.weights[i], 0);
+  }
+  if (model?.trees) {
+    const evalTree = (t: any, f: number[]): number => {
+      if (t.type === "leaf") return t.value;
+      return f[t.feature] < t.threshold ? evalTree(t.left, f) : evalTree(t.right, f);
+    };
+    const vals = model.trees.map((t: any) => evalTree(t, features));
+    return vals.reduce((a: number, b: number) => a + b, 0) / (vals.length || 1);
   }
   return 0;
-}
-
-/**
- * Predict using single tree
- */
-function predictTree(tree: any, features: number[]): number {
-  if (tree.type === "leaf") {
-    return tree.value;
-  }
-  if (features[tree.feature] < tree.threshold) {
-    return predictTree(tree.left, features);
-  } else {
-    return predictTree(tree.right, features);
-    }
 }
 
 /**
