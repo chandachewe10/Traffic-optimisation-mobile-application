@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as geocoding from "../geocoding.js";
+import type * as mlTraining from "../mlTraining.js";
 import type * as routes from "../routes.js";
 import type * as savedRoutes from "../savedRoutes.js";
 import type * as trafficService from "../trafficService.js";
@@ -20,7 +22,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   geocoding: typeof geocoding;
+  mlTraining: typeof mlTraining;
   routes: typeof routes;
   savedRoutes: typeof savedRoutes;
   trafficService: typeof trafficService;

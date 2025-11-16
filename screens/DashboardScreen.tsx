@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
-import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useAllRoutes } from "../hooks/useTrafficAPI";
@@ -10,6 +11,7 @@ import { COLORS, SPACING, TYPOGRAPHY, SHARED_STYLES, BORDER_RADIUS } from "../li
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const { routes } = useAllRoutes();
 
   const aggregateMetrics = useMemo(() => {
@@ -51,12 +53,22 @@ export default function DashboardScreen() {
       scrollEventThrottle={16}
     >
       <View style={styles.header}>
-        <Text style={[TYPOGRAPHY.headlineSmall, { color: COLORS.onSurface }]}>
-          Performance Dashboard
-        </Text>
-        <Text style={[TYPOGRAPHY.bodySmall, { color: COLORS.onSurfaceVariant, marginTop: SPACING.sm }]}>
-          System-wide optimization metrics for Zambia's transit network
-        </Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={[TYPOGRAPHY.headlineSmall, { color: COLORS.onSurface }]}>
+              Performance Dashboard
+            </Text>
+            <Text style={[TYPOGRAPHY.bodySmall, { color: COLORS.onSurfaceVariant, marginTop: SPACING.sm }]}>
+              System-wide optimization metrics for Zambia's transit network
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.adminButton}
+            onPress={() => navigation.navigate("AdminLogin" as never)}
+          >
+            <Ionicons name="shield-checkmark" size={24} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.kpiGrid}>

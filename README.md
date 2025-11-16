@@ -8,8 +8,10 @@ An AI-powered public transit route optimization system for Zambia's bus network.
 - [Features](#features)
 - [Technology Stack](#technology-stack)
 - [Getting Started](#getting-started)
+- [Train Models via Convex Dashboard](#train-models-via-convex-dashboard)
 - [System Metrics & Calculations](#system-metrics--calculations)
 - [System Assumptions](#system-assumptions)
+- [Troubleshooting](#troubleshooting)
 - [Project Structure](#project-structure)
 
 ---
@@ -18,37 +20,28 @@ An AI-powered public transit route optimization system for Zambia's bus network.
 
 TrafficRoutine is a React Native application built with Expo that helps optimize public transit routes in Zambia. The system uses AI-powered predictions to:
 
-- **Predict traffic congestion** based on historical data and time-of-day patterns
+- **Predict traffic congestion** based on natural patterns and time-of-day
 - **Optimize route planning** to reduce travel time and distance
 - **Monitor system-wide performance** through comprehensive dashboards
 - **Provide real-time metrics** including demand forecasting, ETA calculations, and efficiency scoring
 
 The application consists of three main screens:
+
 1. **Home Screen** - Lists all available transit routes with quick metrics
 2. **Route Planner** - Interactive map for planning and saving custom routes
-3. **Dashboard** - System-wide performance metrics and optimization analytics
+3. **Dashboard** - System-wide performance metrics and ML training/retraining controls
 
 ---
 
 ## Features
 
-- 🗺️ **Interactive Route Planning** - Plan routes using Google Maps integration
-- 📊 **Real-time Traffic Predictions** - AI-powered congestion and demand forecasting
-- 🎯 **Route Optimization** - Automatic route optimization with time savings calculations
-- 📈 **Performance Dashboard** - System-wide metrics and efficiency tracking
-- 💾 **Saved Routes** - Save and manage frequently used routes
-- 📱 **Cross-platform** - Works on iOS, Android, and Web
-
----
-
-## Technology Stack
-
-- **Frontend**: React Native with Expo (~53.0.0)
-- **Backend**: Convex (Real-time database and backend functions)
-- **Navigation**: React Navigation (Stack & Bottom Tabs)
-- **Maps**: React Native Maps with Google Maps API integration
-- **Language**: TypeScript
-- **State Management**: Convex React hooks
+- **🗺️ Interactive Route Planning** - Plan routes using Google Maps integration
+- **📊 Real-time Traffic Predictions** - AI-powered congestion and demand forecasting
+- **🎯 Route Optimization** - Automatic route optimization with time savings calculations
+- **📈 Performance Dashboard** - System-wide metrics and efficiency tracking
+- **⚙️ ML Admin Dashboard** - Train/retrain models and inspect jobs from the app or Convex Dashboard
+- **💾 Saved Routes** - Save and manage frequently used routes
+- **📱 Cross-platform** - Works on iOS, Android, and Web
 
 ---
 
@@ -75,30 +68,84 @@ The application consists of three main screens:
    npm install
    ```
 
-3. **Set up Convex backend**
+3. **Start Convex dev server (backend)**
    ```bash
    npx convex dev
    ```
-   This will:
-   - Prompt you to log in to Convex (or create an account)
-   - Create a new Convex project or connect to an existing one
-   - Generate a `.env` file with your `EXPO_PUBLIC_CONVEX_URL`
+   - This will start the local Convex API (usually at `http://127.0.0.1:3210`) and the **Convex Dashboard** (at `http://127.0.0.1:6790`). Keep this terminal running.
+   - A `.env.local` file with `CONVEX_DEPLOYMENT=...` will be created automatically.
 
-4. **Configure Google Maps (Optional)**
-   Create a `.env` file in the root directory:
-   ```env
-   EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key_here
-   ```
-   Note: The app will work without Google Maps, but with limited routing functionality.
+4. **Configure environment variables for the frontend**
+   - Create a `.env` file in the project root and set the public Convex URL to the local API port (not the dashboard port):
+     ```env
+     # Frontend (Expo) talks to the Convex API
+     # Use 127.0.0.1:3210 when running in a local browser
+     EXPO_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
 
-5. **Start the development server**
+     # For Android emulator (Genymotion/AVD), use host alias 10.0.2.2
+     # EXPO_PUBLIC_CONVEX_URL=http://10.0.2.2:3210
+
+     # Optional: Google Maps API Key
+     # EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key_here
+     ```
+
+5. **Start the Expo dev server (frontend)**
    ```bash
-   npm start
+   npx expo start --web   # For web development
+   # or
+   npx expo start         # Then press 'a' for Android emulator or 'i' for iOS simulator
    ```
-   Or for specific platforms:
-   - Web: `npm run web`
-   - Android: `npm run android`
-   - iOS: `npm run ios`
+
+---
+
+## Train Models via Convex Dashboard
+
+You can train and retrain machine learning models either from the in‑app **Admin Dashboard** (UI) or directly from the **Convex Dashboard** (useful for development and ops).
+
+### A) One‑click training inside the app
+
+1. Ensure your Convex dev server is running (`npx convex dev`).
+2. Ensure your frontend is pointed to the correct API port via `EXPO_PUBLIC_CONVEX_URL` (see above) and the Expo app is running.
+3. Open the app → go to the `Dashboard` tab → tap `Admin` → log in.
+   - If you don’t have an admin user yet, create one via Convex Dashboard (see B.2).
+4. (Optional) Tap `Load Sample Data` to seed demo routes and traffic metrics.
+5. Choose a **Model Name** (e.g., `Expected Demand`) and a **Model Type** (e.g., `Linear Regression`).
+6. Tap **Start Training**. You should see a success message with metrics (R², MSE, MAE). The new model will appear under **Active Models** and power the predictions on the Home and Route Detail screens.
+7. When you add new routes in `Route Planner` and tap **Save Route**, they appear on the **Home** screen immediately (via Convex live queries). To generate predictions for newly added routes, run **Start Training** again, or call the training function from the Convex Dashboard (below).
+
+### B) Training and data ops via Convex Dashboard (local dev)
+
+1. **Open the dashboard**: Visit `http://127.0.0.1:6790` (shown in the `npx convex dev` output). This is the backend admin UI.
+2. **Seed sample data (optional)**:
+   - Go to the `Functions` tab → find and run `routes:initializeSampleData`.
+   - Verify data under `Data` → you should see entries in `routes` and `trafficMetrics`.
+3. **Create an admin user** (if you haven’t already):
+   - In `Functions`, run `admin:createAdmin` with JSON args, e.g.:
+     ```json
+     { "modelName": "(ignored here)", "modelType": "ignored", "trainedBy": "Admin" }
+     ```
+     Note: If you prefer, you can also run this from your shell:
+     ```bash
+     npx convex run admin:createAdmin "{\"userName\":\"admin\",\"password\":\"YourSecurePassword\"}"
+     ```
+     After creation, confirm the new user in `Data` → `admins`.
+4. **Trigger ML training from the dashboard**:
+   - Go to `Functions` → `mlTraining:trainModel`.
+   - Provide JSON arguments such as:
+     ```json
+     {
+       "modelName": "passenger_prediction",
+       "modelType": "linear_regression",
+       "trainedBy": "Admin"
+     }
+     ```
+   - Click `Run`. You’ll see the job start; watch `Jobs` and `Logs` tabs for progress.
+   - When complete, check `Data` → `optimizedRoutes` and `predictions` to see newly generated results.
+5. **Refresh the app**:
+   - Your running Expo web/app should automatically reflect the new predictions thanks to Convex’s real‑time sync. If not, refresh the browser or reopen the screen.
+6. **When adding new routes**:
+   - Use the app’s `Route Planner` → `Save Route` to create new entries in `routes`/`savedRoutes`.
+   - For predictions on new routes, rerun `mlTraining:trainModel` (as above) or use the in‑app **Start Training** button.
 
 ---
 
@@ -108,10 +155,12 @@ This section provides detailed explanations of all metrics and calculations used
 
 ### 1. Expected Demand (e.g., 78/120)
 
-**Definition**: The predicted number of passengers expected on a route, displayed as a fraction where the numerator is the predicted demand and the denominator is the route's maximum capacity.
+**Definition**: The predicted number of passengers currently on a route at a snapshot moment, displayed as a fraction where the numerator is the predicted demand and the denominator is the route's maximum capacity.
 
-**Numerator (78)**: Predicted passenger demand for the route
-**Denominator (120)**: Maximum capacity of vehicles operating on the route (`averageCapacity`)
+**Time Interval**: This metric represents a **snapshot** of passenger count at a specific moment in time, not a rate (e.g., not per hour or per 10 minutes). It answers: "How many passengers are currently on this route right now?"
+
+**Numerator (78)**: Predicted number of passengers currently on all vehicles operating on this route at the current moment
+**Denominator (120)**: Maximum total capacity of all vehicles operating on the route (`averageCapacity`) - represents the combined capacity of all buses/vehicles on this route simultaneously
 
 **Calculation**:
 ```typescript
@@ -126,20 +175,23 @@ predictedDemand = Math.min(
    ```typescript
    avgDemand = sum(recentMetrics.expectedPassengers) / recentMetrics.length
    ```
-
 2. Apply peak hour multiplier:
    ```typescript
    peakHourFactor = (hour >= 6 && hour <= 9) ? 1.4 : 1.0
    ```
    - During peak hours (6 AM - 9 AM): Multiply by 1.4
    - During off-peak hours: No multiplier (1.0)
-
 3. Cap at maximum capacity:
    ```typescript
    predictedDemand = Math.min(route.averageCapacity, avgDemand * peakHourFactor)
    ```
 
 **Display Format**: `{predictedDemand} / {averageCapacity}` (e.g., "78 / 120")
+
+**Example Interpretation**: 
+- "78 / 120" means there are currently **78 passengers** across all buses on this route, out of a maximum capacity of **120 passengers** total
+- This is a **snapshot** at the current moment, not a rate per hour
+- If you're asking "how many passengers per hour?", that would require multiplying by trips per hour, which the system doesn't currently calculate
 
 ---
 
@@ -200,7 +252,7 @@ predictedCongestion = Math.min(100, avgCongestion * peakHourFactor)
    ```typescript
    predictedCongestion = Math.min(100, avgCongestion * peakHourFactor)
    ```
-   - Ensures congestion never exceeds 100%
+   - Ensures congestion never reaches above 100%
 
 **Range**: 0% - 100%
 - 0-30%: Low congestion (Green)
@@ -211,20 +263,21 @@ predictedCongestion = Math.min(100, avgCongestion * peakHourFactor)
 
 ### 4. Expected Passengers (e.g., 85 of 120)
 
-**Definition**: Same as Expected Demand, displayed in a different format. Represents the predicted number of passengers expected on a route compared to the route's maximum capacity.
+**Definition**: Same as Expected Demand, displayed in a different format. Represents the predicted number of passengers currently on a route (at a snapshot moment) compared to the route's maximum capacity.
 
-**Numerator (85)**: Predicted passenger count (`predictedDemand`)
-**Denominator (120)**: Maximum route capacity (`averageCapacity`)
+**Time Interval**: **Snapshot metric** - represents passengers on route at a specific moment, not a rate per hour or time period.
 
-**Calculation**: Identical to Expected Demand calculation (see section 1 above).
+**Numerator (85)**: Predicted number of passengers currently on all vehicles operating on this route (`predictedDemand`)
+**Denominator (120)**: Maximum total capacity of all vehicles on the route (`averageCapacity`)
 
-**Prediction Method**:
-1. Analyze historical passenger data from last 5 records
-2. Calculate average passenger count
-3. Apply time-of-day adjustments (40% increase during peak hours)
-4. Ensure prediction doesn't exceed route capacity
+**Calculation**: Identical to Expected Demand (see section above)
 
 **Display Format**: `{predictedDemand} of {averageCapacity}` (e.g., "85 of 120")
+
+**Example Interpretation**:
+- "85 of 120" means there are currently **85 passengers** on this route at this moment, out of a maximum of **120 passengers** total capacity
+- This is a **current snapshot**, not passengers per hour
+- To convert to passengers per hour, you would need to know the route frequency (e.g., if buses run every 10 minutes = 6 trips/hour, and each trip carries ~85 passengers on average, then approximately 510 passengers/hour)
 
 ---
 
@@ -243,16 +296,7 @@ confidenceScore = Math.min(0.95, 0.7 + (recentMetrics.length * 0.05))
 - **Maximum confidence**: 0.95 (95%)
 
 **Confidence Levels**:
-- **1 data point**: 70% + (1 × 5%) = 75%
-- **2 data points**: 70% + (2 × 5%) = 80%
-- **3 data points**: 70% + (3 × 5%) = 85%
-- **4 data points**: 70% + (4 × 5%) = 90%
-- **5+ data points**: 70% + (5 × 5%) = 95% (capped)
-
-**Display**: Converted to percentage: `confidenceScore * 100` (e.g., 0.95 → "95%")
-
-**Interpretation**:
-- **≥ 90%**: Very reliable prediction
+- **≥ 90%**: Very reliable
 - **75-89%**: Moderately reliable
 - **< 75%**: Lower reliability (limited historical data)
 
@@ -260,35 +304,19 @@ confidenceScore = Math.min(0.95, 0.7 + (recentMetrics.length * 0.05))
 
 ### 6. Optimization Score (e.g., 27/100)
 
-**Definition**: A composite score that evaluates how well a route is optimized, considering congestion levels, passenger demand, and prediction confidence. The score ranges from 0 to 100, where higher scores indicate better optimization potential.
+**Definition**: A composite score that evaluates how well a route is optimized, considering congestion levels, passenger demand, and prediction confidence. The score ranges from 0 to 100, where higher scores indicate better performance.
 
 **Formula**:
 ```typescript
-optimizationScore = (congestionFactor * demandFactor * confidenceFactor) * 100
+optimizationScore = (congestionFactor + demandFactor + confidenceFactor) / 3 * 100
 ```
 
 **Component Calculations**:
+- **Congestion Factor** (0 to 1): `1 - (predictedCongestion / 100)`
+- **Demand Factor** (0 to 1): `predictedDemand / route.averageCapacity`
+- **Confidence Factor** (0.7 to 0.95): `confidenceScore`
 
-1. **Congestion Factor** (0 to 1):
-   ```typescript
-   congestionFactor = 1 - (predictedCongestion / 100)
-   ```
-   - Lower congestion = Higher factor
-   - Example: 56% congestion → factor = 1 - 0.56 = 0.44
-
-2. **Demand Factor** (0 to 1):
-   ```typescript
-   demandFactor = predictedDemand / route.averageCapacity
-   ```
-   - Represents utilization rate
-   - Example: 78 passengers / 120 capacity = 0.65
-
-3. **Confidence Factor** (0.7 to 0.95):
-   ```typescript
-   confidenceFactor = confidenceScore (as calculated in section 5)
-   ```
-
-**Complete Example Calculation**:
+**Example**:
 ```
 Given:
 - Predicted Congestion: 56%
@@ -296,139 +324,23 @@ Given:
 - Route Capacity: 120 passengers
 - Confidence Score: 0.95
 
-Step 1: congestionFactor = 1 - (56/100) = 0.44
-Step 2: demandFactor = 78/120 = 0.65
-Step 3: confidenceFactor = 0.95
+congestionFactor = 1 - 0.56 = 0.44
 
-optimizationScore = (0.44 * 0.65 * 0.95) * 100
-                  = 0.2717 * 100
-                  = 27.17 ≈ 27/100
-```
+demandFactor = 78 / 120 ≈ 0.65
 
-**Score Interpretation**:
-- **80-100**: Excellent optimization
-- **60-79**: Good optimization
-- **40-59**: Moderate optimization
-- **20-39**: Poor optimization (high congestion, low demand, or low confidence)
-- **0-19**: Very poor optimization
+confidenceFactor = 0.95
 
-**Numerator (27)**: Calculated optimization score
-**Denominator (100)**: Maximum possible score
-
----
-
-### 7. Active Routes (e.g., 3)
-
-**Definition**: The total number of transit routes currently active in the system.
-
-**Determination Method**:
-```typescript
-activeRoutes = routes.length
-```
-
-The system counts all routes returned by the `listAllRoutes` query from the database. A route is considered "active" if it exists in the `routes` table, regardless of whether vehicles are currently operating on it.
-
-**Calculation**:
-- Queries all records from the `routes` table
-- Returns the count of routes
-- Updates in real-time as routes are added or removed
-
-**Note**: This is a simple count and doesn't filter based on:
-- Current vehicle presence
-- Time of operation
-- Service status
-
----
-
-### 8. System Capacity (e.g., 370 passengers)
-
-**Definition**: The total maximum passenger capacity across all routes in the transit network. This represents the theoretical maximum number of passengers that can be accommodated simultaneously if all vehicles operate at full capacity.
-
-**Formula**:
-```typescript
-systemCapacity = sum(routes.averageCapacity)
-```
-
-**Calculation Steps**:
-1. Retrieve all routes from the database
-2. Sum the `averageCapacity` value from each route
-3. Return the total
-
-**Example**:
-```
-Route 1: 120 passengers capacity
-Route 2: 100 passengers capacity
-Route 3: 150 passengers capacity
-
-System Capacity = 120 + 100 + 150 = 370 passengers
+optimizationScore = ((0.44 + 0.65 + 0.95) / 3) * 100 ≈ 68
 ```
 
 **Interpretation**:
-- This represents the **total theoretical capacity** of the fleet
-- Does not account for:
-  - Vehicles not in service
-  - Vehicles operating below capacity
-  - Route overlapping (shared vehicles)
-- Useful for:
-  - Fleet planning
-  - Capacity utilization analysis
-  - Network expansion decisions
+- **80-100**: Excellent optimization
+- **60-79**: Good
+- **40-59**: Moderate
+- **0-39**: Needs improvement
 
-**Display**: `{totalCapacity} passengers` (e.g., "370 passengers")
-
----
-
-### 9. System Efficiency Gain (e.g., 12.5%)
-
-**Definition**: The overall improvement in system efficiency achieved through route optimization, expressed as a percentage. This metric represents the aggregate benefit of applying optimized routes across the entire transit network.
-
-**Current Implementation**:
-```typescript
-efficiencyGain = 12.5  // Fixed value (percentage)
-```
-
-**Note**: In the current implementation, this is a static value. In a production system, it would be calculated as:
-
-**Intended Formula** (per route):
-```typescript
-routeEfficiencyGain = (timeSaved / baselineETA) * 100
-```
-
-**System-wide Calculation** (would be):
-```typescript
-// Average efficiency gain across all optimized routes
-systemEfficiencyGain = average(
-  routes.map(route => routeEfficiencyGain)
-)
-```
-
-**Per-Route Efficiency Gain Formula**:
-```typescript
-// From optimized route calculations:
-baselineETA = (distance / 40) * 60  // Baseline speed: 40 km/h
-optimizedETA = (optimizedDistance / 50) * 60  // Optimized speed: 50 km/h
-timeSaved = baselineETA - optimizedETA
-efficiencyGain = (timeSaved / baselineETA) * 100
-```
-
-**Example Calculation**:
-```
-Given:
-- Baseline Distance: 22.5 km
-- Optimized Distance: 20.7 km (8% reduction: 22.5 * 0.92)
-- Baseline ETA: (22.5 / 40) * 60 = 33.75 minutes
-- Optimized ETA: (20.7 / 50) * 60 = 24.84 minutes
-- Time Saved: 33.75 - 24.84 = 8.91 minutes
-
-Efficiency Gain = (8.91 / 33.75) * 100 = 26.4%
-```
-
-**Display**: `{efficiencyGain}% improvement` (e.g., "12.5% improvement")
-
-**What It Measures**:
-- Time savings percentage
-- Reduction in travel time through optimization
-- Overall network performance improvement
+**Numerator (e.g., 68)**: The aggregate score from the three factors (scaled to 100)
+**Denominator (100)**: Maximum possible score
 
 ---
 
@@ -436,47 +348,41 @@ Efficiency Gain = (8.91 / 33.75) * 100 = 26.4%
 
 The system makes several assumptions for calculations and predictions:
 
-### Route Assumptions
-
 1. **Average Vehicle Speed**:
    - Baseline: 40 km/h (normal traffic conditions)
    - Optimized: 50 km/h (with route optimization)
-
 2. **Peak Hours**:
    - Defined as 6:00 AM - 9:00 AM
-   - Peak hour multiplier: 1.4x for congestion and demand
-
+   - Peak hour multiplier: 1.4× for congestion and demand
 3. **Route Optimization**:
    - Optimized routes are 8% shorter than baseline (`distance * 0.92`)
    - Optimized routes reduce travel time by ~15% (`time * 0.85`)
-   - Optimized routes reduce congestion by 30% (`congestion * 0.7`)
-
+   - Optimized routes reduce congestion by ~30% (`congestion * 0.7`)
 4. **Historical Data**:
    - Uses last 5 traffic metric records for predictions
-   - If no historical data exists, defaults to 0 for averages
+   - If no historical data exists, default metrics fallback to 0 (guards against `NaN`)
+5. **Capacity Assumptions**:
+   - Each route has a fixed `averageCapacity` (sum across operating buses)
+   - System capacity = sum of all routes' `averageCapacity`
+6. **Metrics Safety**:
+   - Training pipeline sanitizes metrics to avoid `NaN`/`Infinity`
+   - `getTrainingJobs` includes `_creationTime` and returns numeric metrics
 
-5. **Confidence Scoring**:
-   - Minimum confidence: 70% (with 0 data points)
-   - Maximum confidence: 95% (with 5+ data points)
-   - Each additional data point adds 5% confidence
+---
 
-6. **Congestion Calculation**:
-   - Based solely on historical data and time-of-day
-   - Does not account for:
-     - Real-time traffic events
-     - Weather conditions
-     - Special events
-     - Road construction
+## Troubleshooting
 
-7. **Capacity Assumptions**:
-   - Each route has a fixed `averageCapacity`
-   - Capacity represents maximum passengers per vehicle/bus
-   - System capacity is sum of all route capacities
-
-8. **Distance Calculation**:
-   - Uses Haversine formula for straight-line distance
-   - Google Maps API (if available) provides actual road distance
-   - Falls back to simplified route generation if API unavailable
+- **Web app shows “WebSocket … /api/1.29.0/sync … 404”**
+  - Your frontend is pointing at the Convex dashboard port (6790) instead of the API port. Set `EXPO_PUBLIC_CONVEX_URL` to the **API port** printed by `npx convex dev` (usually `http://127.0.0.1:3210`), then restart Expo (`npx expo start --clear`). Keep `npx convex dev` running in a separate terminal.
+- **Android emulator can’t reach the backend**
+  - Use `EXPO_PUBLIC_CONVEX_URL=http://10.0.2.2:3210` (Android emulator’s host alias).
+- **`ReturnsValidationError` mentioning `_creationTime` or `NaN`**
+  - Pull the latest code (we’ve updated the backend schema and metric sanitization).
+  - Restart `npx convex dev` to reload functions.
+  - If you have old `trainingJobs` rows with invalid metrics, delete them in `http://127.0.0.1:6790` → `Data` → `trainingJobs`.
+- **No predictions after adding a new route**
+  - New routes appear immediately on **Home** via live queries.
+  - To compute predictions for new routes, re‑run training (in‑app `Start Training` or `mlTraining:trainModel` in the dashboard).
 
 ---
 
@@ -500,22 +406,31 @@ TrafficRoutine/
 │   ├── routes.ts        # Route queries and mutations
 │   ├── savedRoutes.ts   # Saved routes management
 │   ├── schema.ts        # Database schema
-│   └── trafficService.ts # Traffic prediction logic
-├── hooks/               # Custom React hooks
-│   └── useTrafficAPI.ts # API integration hooks
-├── lib/                 # Utility libraries
+│   ├── admin.ts         # Admin & ML job APIs
+│   ├── mlTraining.ts    # ML training & metrics sanitization
+│   └── trafficService.ts # Traffic prediction & optimization logic
+├── hooks/
+│   ├── useTrafficAPI.ts # Data fetching and actions used by screens
+│   └── useAdminAPI.ts   # Admin & training hooks
+├── lib/
 │   ├── geocoding.ts     # Geocoding utilities
-│   ├── routeCalculator.ts # Route calculation functions
-│   └── theme.ts         # Theme and styling constants
-├── screens/             # Application screens
+│   ├── routeCalculator.ts # Route calculation helpers
+│   └── theme.ts         # UI theming
+├── ml_training/         # Optional Python training script (scikit-learn)
+│   ├── train_model.py
+│   └── requirements.txt
+├── screens/
 │   ├── DashboardScreen.tsx
 │   ├── HomeScreen.tsx
 │   ├── RouteDetailScreen.tsx
-│   └── RoutePlannerScreen.tsx
-├── App.tsx              # Main application component
+│   ├── RoutePlannerScreen.tsx
+│   ├── AdminLogin.tsx
+│   └── AdminDashboard.tsx
+├── App.tsx              # Main application shell
 ├── app.json             # Expo configuration
+├── .env                 # Frontend env (EXPO_PUBLIC_CONVEX_URL, etc.)
 ├── package.json         # Dependencies and scripts
-└── tsconfig.json        # TypeScript configuration
+└── tsconfig.json        # TypeScript config
 ```
 
 ---
@@ -525,12 +440,18 @@ TrafficRoutine/
 Create a `.env` file in the root directory:
 
 ```env
-# Required: Convex backend URL (auto-generated by `npx convex dev`)
-EXPO_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
+# Required: Convex backend URL (used by the Expo app & web)
+# For local web (browser) with `npx convex dev` printing `http://127.0.0.1:3210`:
+EXPO_PUBLIC_CONVEX_URL=http://127.0.0.1:3210
+
+# For Android emulator (host alias to localhost):
+# EXPO_PUBLIC_CONVEX_URL=http://10.0.2.2:3210
 
 # Optional: Google Maps API Key (for enhanced routing)
-EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
+# EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 ```
+
+> Note: The Conviction Dashboard runs on a different port (`http://127.0.0.1:6790`) and is only for inspecting data & running functions. Your frontend must point to the **API** port printed by `npx convex dev` (e.g., `http://127.0.0.1:3210`).
 
 ---
 

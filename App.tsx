@@ -11,6 +11,8 @@ import HomeScreen from "./screens/HomeScreen"
 import RoutePlannerScreen from "./screens/RoutePlannerScreen"
 import DashboardScreen from "./screens/DashboardScreen"
 import RouteDetailScreen from "./screens/RouteDetailScreen"
+import AdminLoginScreen from "./screens/AdminLoginScreen"
+import AdminDashboardScreen from "./screens/AdminDashboardScreen"
 import ConvexSetupScreen from "./components/ConvexSetupScreen"
 
 import { COLORS } from './lib/theme';
@@ -40,6 +42,8 @@ function DashboardStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Dashboard" component={DashboardScreen} />
+      <Stack.Screen name="AdminLogin" component={AdminLoginScreen} options={{ headerShown: true, title: "Admin Login" }} />
+      <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} options={{ headerShown: true, title: "Admin Dashboard" }} />
     </Stack.Navigator>
   );
 }

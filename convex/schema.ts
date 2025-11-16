@@ -70,4 +70,48 @@ export default defineSchema({
     optimizedTime: v.optional(v.number()),
     createdAt: v.number(),
   }).index("by_user", ["userId"]),
+
+  // Admin authentication
+  admins: defineTable({
+    username: v.string(),
+    passwordHash: v.string(), // SHA-256 hash of password
+    createdAt: v.number(),
+  }).index("by_username", ["username"]),
+
+  // ML Models
+  mlModels: defineTable({
+    modelType: v.string(), // "linear_regression", "random_forest", etc.
+    modelName: v.string(), // "passenger_prediction", "congestion_prediction", "eta_prediction"
+    modelData: v.string(), // Base64 encoded model (or JSON serialized for simple models)
+    trainingDataHash: v.string(), // Hash of training data used
+    trainingMetrics: v.object({
+      r2Score: v.number(),
+      mse: v.number(),
+      mae: v.number(),
+    }),
+    featureColumns: v.array(v.string()), // List of feature names
+    targetColumn: v.string(), // Target variable name
+    trainedAt: v.number(),
+    trainedBy: v.string(), // Admin username
+    isActive: v.boolean(), // Whether this model is currently being used
+  }).index("by_model_name", ["modelName"])
+    .index("by_active", ["isActive"]),
+
+  // Training jobs/history
+  trainingJobs: defineTable({
+    modelName: v.string(),
+    modelType: v.string(),
+    status: v.string(), // "pending", "training", "completed", "failed"
+    trainingDataSize: v.number(),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    metrics: v.optional(v.object({
+      r2Score: v.number(),
+      mse: v.number(),
+      mae: v.number(),
+    })),
+    errorMessage: v.optional(v.string()),
+    trainedBy: v.string(),
+  }).index("by_status", ["status"])
+    .index("by_model_name", ["modelName"]),
 });
